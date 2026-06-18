@@ -183,9 +183,10 @@ async function loadAndRender(dateStr) {
   updateDotNavigation();
 }
 
-// ====== 拖拽翻页 ======
-const DRAG_THRESHOLD = 0.30, MAX_ROTATE = 180;
-const drag = { active: false, startX: 0, currentX: 0, pageEl: null, direction: null, startTime: 0 };
+// ====== 拖拽翻页（电子书风格：左滑前进，右滑后退）======
+const DRAG_THRESHOLD = 0.25, MAX_ROTATE = 160;
+const drag = { active: false, startX: 0, currentX: 0, direction: null, startTime: 0,
+               leftPage: null, rightPage: null };
 
 function initDragToFlip() {
   const book = document.getElementById('book');
@@ -203,80 +204,124 @@ function getEventX(e) { return e.touches ? e.touches[0].clientX : e.clientX; }
 function onDragStart(e) {
   if (state.isFlipping) return;
   if (e.target.closest('.stock-tag,input,textarea,button,.add-tag-btn,.install-btn,.install-dismiss')) return;
-  const book = document.getElementById('book');
-  const rect = book.getBoundingClientRect();
+
   const x = getEventX(e);
-  const isRightPage = x > rect.left + rect.width / 2;
-
-  drag.active = true; drag.startX = x; drag.currentX = x;
+  drag.active = true;
+  drag.startX = x;
+  drag.currentX = x;
   drag.startTime = Date.now();
-  drag.direction = isRightPage ? 'forward' : 'backward';
-  drag.pageEl = isRightPage ? document.getElementById('rightContent') : document.getElementById('leftContent');
+  drag.direction = null; // 由滑动方向决定
+  drag.leftPage = document.getElementById('leftContent');
+  drag.rightPage = document.getElementById('rightContent');
 
-  if (isRightPage) drag.pageEl.style.transformOrigin = 'left center';
-  else drag.pageEl.style.transformOrigin = 'right center';
-
-  drag.pageEl.style.transition = 'none';
-  book.classList.add('dragging');
+  drag.leftPage.style.transition = 'none';
+  drag.rightPage.style.transition = 'none';
+  document.getElementById('book').classList.add('dragging');
   document.body.style.cursor = 'grabbing';
   e.preventDefault();
 }
 
 function onDragMove(e) {
-  if (!drag.active || !drag.pageEl) return;
+  if (!drag.active) return;
   drag.currentX = getEventX(e);
   const deltaX = drag.currentX - drag.startX;
-  const pageWidth = drag.pageEl.parentElement.clientWidth;
-  const forward = drag.direction === 'forward';
-  let ratio = forward ? Math.max(-1, Math.min(0, deltaX / pageWidth)) : Math.max(0, Math.min(1, deltaX / pageWidth));
-  drag.pageEl.style.transform = `rotateY(${ratio * MAX_ROTATE}deg)`;
 
-  const absRatio = Math.abs(ratio);
+  // 判断滑动方向
+  if (deltaX < -5) drag.direction = 'forward';      // 左滑 = 前进
+  else if (deltaX > 5) drag.direction = 'backward'; // 右滑 = 后退
+  if (!drag.direction) return;
+
+  const book = document.getElementById('book');
+  const pageWidth = book.clientWidth / 2; // 单页宽度
+  const absDelta = Math.abs(deltaX);
+  const ratio = Math.min(absDelta / pageWidth, 1);
+
   const overlay = document.getElementById('flipOverlay');
-  overlay.style.opacity = absRatio * 0.6;
-  overlay.style.background = `radial-gradient(ellipse at ${forward ? '30%' : '70%'} 50%, rgba(0,0,0,${absRatio * 0.18}) 0%, transparent 70%)`;
+  overlay.style.opacity = ratio * 0.7;
+
+  if (drag.direction === 'forward') {
+    // 左滑前进：右页从书脊向左翻
+    drag.rightPage.style.transformOrigin = 'left center';
+    drag.rightPage.style.transform = `rotateY(${-ratio * MAX_ROTATE}deg)`;
+    drag.leftPage.style.transform = '';
+    overlay.style.background = `radial-gradient(ellipse at 25% 50%, rgba(0,0,0,${ratio * 0.2}) 0%, transparent 70%)`;
+  } else {
+    // 右滑后退：左页从书脊向右翻
+    drag.leftPage.style.transformOrigin = 'right center';
+    drag.leftPage.style.transform = `rotateY(${ratio * MAX_ROTATE}deg)`;
+    drag.rightPage.style.transform = '';
+    overlay.style.background = `radial-gradient(ellipse at 75% 50%, rgba(0,0,0,${ratio * 0.2}) 0%, transparent 70%)`;
+  }
   e.preventDefault();
 }
 
 async function onDragEnd(e) {
-  if (!drag.active) return;
+  if (!drag.active || !drag.direction) {
+    drag.active = false;
+    return;
+  }
+
   const book = document.getElementById('book');
   const overlay = document.getElementById('flipOverlay');
   book.classList.remove('dragging');
   document.body.style.cursor = '';
 
   const deltaX = drag.currentX - drag.startX;
-  const pageWidth = drag.pageEl.parentElement.clientWidth;
+  const pageWidth = book.clientWidth / 2;
   const absRatio = Math.abs(deltaX / pageWidth);
-  const wasQuick = (Date.now() - drag.startTime) < 200 && absRatio > 0.08;
+  const wasQuick = (Date.now() - drag.startTime) < 250 && absRatio > 0.06;
   const shouldFlip = absRatio > DRAG_THRESHOLD || wasQuick;
 
   if (shouldFlip) {
+    // 完成翻页
+    state.isFlipping = true;
     const targetAngle = drag.direction === 'forward' ? -MAX_ROTATE : MAX_ROTATE;
-    drag.pageEl.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
-    drag.pageEl.style.transform = `rotateY(${targetAngle}deg)`;
+    const turningPage = drag.direction === 'forward' ? drag.rightPage : drag.leftPage;
+
+    turningPage.style.transition = 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
+    turningPage.style.transform = `rotateY(${targetAngle}deg)`;
 
     setTimeout(async () => {
-      overlay.style.transition = 'opacity 0.15s';
-      overlay.style.opacity = '0'; overlay.style.background = '';
       const targetDate = getTargetDate(drag.direction);
       await loadAndRender(targetDate);
-      drag.pageEl.style.transition = 'none';
-      drag.pageEl.style.transform = '';
-      drag.pageEl.style.transformOrigin = '';
-    }, 200);
+      // 重置
+      turningPage.style.transition = 'none';
+      turningPage.style.transform = '';
+      turningPage.style.transformOrigin = '';
+      drag.leftPage.style.transformOrigin = '';
+      drag.rightPage.style.transformOrigin = '';
+      overlay.style.opacity = '0';
+      overlay.style.background = '';
+      state.isFlipping = false;
+    }, 180);
   } else {
-    drag.pageEl.style.transition = 'transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-    drag.pageEl.style.transform = 'rotateY(0deg)';
-    overlay.style.transition = 'opacity 0.25s';
-    overlay.style.opacity = '0'; overlay.style.background = '';
+    // 弹回原位
+    const spring = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    if (drag.direction === 'forward') {
+      drag.rightPage.style.transition = spring;
+      drag.rightPage.style.transform = 'rotateY(0deg)';
+    } else {
+      drag.leftPage.style.transition = spring;
+      drag.leftPage.style.transform = 'rotateY(0deg)';
+    }
+    overlay.style.transition = 'opacity 0.2s';
+    overlay.style.opacity = '0';
+    overlay.style.background = '';
+
+    setTimeout(() => {
+      drag.leftPage.style.transition = '';
+      drag.leftPage.style.transform = '';
+      drag.leftPage.style.transformOrigin = '';
+      drag.rightPage.style.transition = '';
+      drag.rightPage.style.transform = '';
+      drag.rightPage.style.transformOrigin = '';
+    }, 350);
   }
 
-  setTimeout(() => {
-    if (drag.pageEl) { drag.pageEl.style.transition = ''; drag.pageEl.style.transform = ''; drag.pageEl.style.transformOrigin = ''; }
-  }, 400);
-
-  drag.active = false; drag.pageEl = null; drag.direction = null;
+  drag.active = false;
+  drag.leftPage = null;
+  drag.rightPage = null;
+  drag.direction = null;
 }
 
 function getTargetDate(direction) {
