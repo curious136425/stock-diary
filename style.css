@@ -170,6 +170,11 @@ body {
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-y;
+  -webkit-touch-callout: none;
+}
+
+.book.dragging {
+  touch-action: none;
 }
 
 .book:active { cursor: grabbing; }
@@ -258,6 +263,8 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   z-index: 2;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   /* 回弹过渡由JS动态控制 */
   will-change: transform;
 }
