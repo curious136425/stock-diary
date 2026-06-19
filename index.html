@@ -3,19 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>每日选股日记</title>
-
-<!-- PWA -->
+<title>选股日记</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a1a2e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="选股日记">
-<meta name="mobile-web-app-capable" content="yes">
 <link rel="apple-touch-icon" href="icons/icon-192x192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png">
-
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,80 +19,49 @@
 <!-- 安装横幅 -->
 <div class="install-banner" id="installBanner" style="display:none;">
   <div class="install-banner-content">
-    <img src="icons/icon-192x192.png" class="install-icon" alt="选股日记">
-    <div class="install-text">
-      <strong>每日选股日记</strong>
-      <span>添加到桌面，像APP一样使用</span>
-    </div>
+    <img src="icons/icon-192x192.png" class="install-icon">
+    <div class="install-text"><strong>选股日记</strong><span>添加到桌面使用</span></div>
     <button class="install-btn" id="btnInstall">安装</button>
     <button class="install-dismiss" id="btnDismiss">✕</button>
   </div>
 </div>
 
-<!-- 模块切换 -->
-<header class="module-bar">
+<!-- 顶部 -->
+<header class="top-bar">
   <div class="module-tabs">
-    <button class="module-tab active" data-module="regular" onclick="switchModule('regular')">
-      <span class="tab-icon">📊</span> 选股日记
-    </button>
-    <button class="module-tab" data-module="temporary" onclick="switchModule('temporary')">
-      <span class="tab-icon">📝</span> 临时日记
-    </button>
+    <button class="module-tab active" onclick="switchModule('regular')">📊 选股日记</button>
+    <button class="module-tab" onclick="switchModule('temporary')">📝 临时日记</button>
   </div>
-  <div class="module-actions">
+  <div class="top-actions">
+    <button class="act-btn" onclick="runAIAnalysis()">🤖</button>
     <div class="dropdown">
-      <button class="btn-action">📥 导出 ▾</button>
+      <button class="act-btn">📥</button>
       <div class="dropdown-menu">
         <a href="#" data-format="md">Markdown</a>
         <a href="#" data-format="html">HTML</a>
-        <a href="#" data-format="xlsx">Excel (.csv)</a>
-        <a href="#" data-format="docx">Word (.doc)</a>
+        <a href="#" data-format="xlsx">Excel</a>
+        <a href="#" data-format="docx">Word</a>
       </div>
     </div>
-    <button class="btn-action" id="btnAI" onclick="runAIAnalysis()">🤖 AI分析</button>
   </div>
 </header>
 
-<!-- 书 -->
-<main class="book-stage">
-  <div class="book" id="book">
-    <div class="book-spine"></div>
-
-    <div class="page page-left" id="pageLeft">
-      <div class="page-crease"></div>
-      <div class="page-inner" id="leftContent"></div>
-      <div class="page-number" id="leftPageNum"></div>
+<!-- 页面主体：单页滑动区 -->
+<div class="page-wrapper" id="pageWrapper">
+  <div class="page-sheet" id="pageSheet">
+    <div class="page-scroll" id="pageScroll">
+      <!-- JS动态渲染 -->
     </div>
-
-    <div class="page page-right" id="pageRight">
-      <div class="page-crease"></div>
-      <div class="page-inner" id="rightContent"></div>
-      <div class="page-number" id="rightPageNum"></div>
-    </div>
-
-    <div class="flip-overlay" id="flipOverlay"></div>
   </div>
-</main>
+</div>
 
 <!-- 底部导航 -->
-<footer class="book-nav">
-  <div class="nav-center">
-    <input type="date" id="datePicker" class="date-input">
-    <span class="nav-label" id="navLabel">第 1 页</span>
-    <span class="swipe-hint" style="font-size:11px;color:rgba(255,255,255,0.35);padding:0 4px;">右滑后退 ◀ │ ▶ 左滑前进</span>
-  </div>
-  <div class="nav-right">
-    <button class="nav-dot active" data-page="0" id="dot0"></button>
-    <button class="nav-dot" data-page="1" id="dot1"></button>
-    <button class="nav-dot" data-page="2" id="dot2"></button>
-    <button class="nav-dot" data-page="3" id="dot3"></button>
-    <button class="nav-dot" data-page="4" id="dot4"></button>
-    <span class="nav-ellipsis">…</span>
-    <button class="btn-sm" onclick="goToday()">📅 今天</button>
-  </div>
+<footer class="bottom-bar">
+  <span class="page-indicator" id="pageIndicator">第 1 页</span>
+  <input type="date" id="datePicker" class="date-input">
+  <span class="swipe-hint">◀ 左滑前进 · 右滑后退 ▶</span>
 </footer>
 
-<!-- 模态框 -->
 <div class="modal-overlay" id="modalOverlay" style="display:none">
   <div class="modal" id="modalContent"></div>
 </div>
@@ -105,44 +70,22 @@
 
 <script src="app.js"></script>
 
-<!-- PWA 安装 + Service Worker -->
 <script>
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
-let installPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  installPrompt = e;
-  document.getElementById('installBanner').style.display = 'block';
-});
-
+let ip;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); ip = e;
+  document.getElementById('installBanner').style.display = 'block'; });
 document.getElementById('btnInstall')?.addEventListener('click', async () => {
-  if (!installPrompt) return;
-  installPrompt.prompt();
-  await installPrompt.userChoice;
-  installPrompt = null;
-  document.getElementById('installBanner').style.display = 'none';
-});
-
-document.getElementById('btnDismiss')?.addEventListener('click', () => {
-  document.getElementById('installBanner').style.display = 'none';
-});
-
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-if (isIOS && !isStandalone) {
-  setTimeout(() => {
-    const banner = document.getElementById('installBanner');
-    if (banner.style.display === 'none') {
-      banner.querySelector('.install-text span').textContent = '分享 → 添加到主屏幕';
-      banner.querySelector('.install-btn').textContent = '如何安装';
-      banner.querySelector('.install-btn').onclick = () => alert('点浏览器底部「分享」→「添加到主屏幕」');
-      banner.style.display = 'block';
-    }
-  }, 3000);
-}
+  if(ip) { ip.prompt(); await ip.userChoice; ip=null; }
+  document.getElementById('installBanner').style.display = 'none'; });
+document.getElementById('btnDismiss')?.addEventListener('click', () =>
+  document.getElementById('installBanner').style.display = 'none');
+if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone) setTimeout(() => {
+  const b = document.getElementById('installBanner');
+  if(b.style.display==='none') { b.querySelector('.install-text span').textContent='分享→添加到主屏幕';
+    b.querySelector('.install-btn').textContent='如何安装';
+    b.querySelector('.install-btn').onclick=()=>alert('点分享→添加到主屏幕'); b.style.display='block'; } }, 3000);
 </script>
 </body>
 </html>
