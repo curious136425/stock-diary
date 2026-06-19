@@ -89,10 +89,12 @@ body {
 .page-sheet {
   width: 100%;
   max-width: 600px;
+  height: 100%;
   background: var(--paper);
   border-radius: 10px;
   box-shadow: var(--shadow);
   position: relative;
+  overflow: hidden;
   will-change: transform;
 }
 
