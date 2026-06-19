@@ -150,13 +150,13 @@ function updateIndicator() {
 
 async function jumpTo(dateStr) {
   await loadAndRender(dateStr);
-  document.getElementById('pageScroll').scrollTop = 0;
+  document.getElementById('pageWrapper').scrollTop = 0;
 }
 
 // ====== 内容渲染 (单页) ======
 function renderPage() {
   S.module === 'regular' ? renderRegular() : renderTemp();
-  document.getElementById('pageScroll').scrollTop = 0;
+  document.getElementById('pageWrapper').scrollTop = 0;
 }
 
 function renderRegular() {
