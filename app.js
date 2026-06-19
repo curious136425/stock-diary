@@ -372,14 +372,13 @@ function download(content, name, type) {
   const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
 }
 
-// ====== 仿真书翻页（慢速、丝滑）======
+// ====== 仿真书翻页（慢速、不闪屏）======
 const THRESH = 0.20;
-const sw = { active: false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, sheet:null, locked:false };
+const sw = { active:false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, sheet:null, locked:false };
 
 function initSwipe() {
   sw.sheet = document.getElementById('pageSheet');
   const pw = document.getElementById('pageWrapper');
-  // 加透视深度
   pw.style.perspective = '1200px';
 
   pw.addEventListener('touchstart', onStart, { passive: false });
@@ -405,33 +404,24 @@ function onMove(e) {
   if (!sw.locked) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
     if (Math.abs(dx) > Math.abs(dy) * 1.5) {
-      sw.dir = dx < 0 ? 1 : -1; // 1=前进, -1=后退
+      sw.dir = dx < 0 ? 1 : -1;
       sw.locked = true;
       e.preventDefault();
-    } else {
-      sw.dir = 0; sw.locked = true;
-      return;
-    }
+    } else { sw.dir = 0; sw.locked = true; return; }
   }
-
   if (sw.dir === 0) return;
   e.preventDefault();
 
-  // 仿真书翻页效果：平移 + 轻微3D旋转 + 阴影
   const w = sw.sheet.parentElement.clientWidth;
-  const ratio = Math.min(Math.abs(dx) / (w * 0.6), 1);
   const clampedDx = Math.max(-w, Math.min(w, dx));
+  const ratio = Math.min(Math.abs(clampedDx / w), 1);
 
-  // 平移跟手 + 3D旋转 + 缩放
-  const rotateY = (clampedDx / w) * 25; // 最多倾斜25度
-  const scale = 1 - Math.abs(clampedDx / w) * 0.05; // 轻微缩小
-  sw.sheet.style.transform = `translateX(${clampedDx}px) rotateY(${rotateY}deg) scale(${scale})`;
-  sw.sheet.style.opacity = `${1 - ratio * 0.15}`;
-
-  // 翻页阴影（书脊侧加深）
-  const shadowX = sw.dir === 1 ? 'left' : 'right';
-  const shadowIntensity = ratio * 0.25;
-  sw.sheet.style.boxShadow = `${shadowX === 'left' ? '-' : ''}${ratio * 60}px 0 ${ratio * 80}px -20px rgba(0,0,0,${shadowIntensity}), 0 2px 16px rgba(0,0,0,0.12)`;
+  // 跟手：平移 + 轻微3D + 阴影（不改透明度！）
+  const rotateY = (clampedDx / w) * 18;
+  const shX = sw.dir === 1 ? 'left' : 'right';
+  sw.sheet.style.transform = `translateX(${clampedDx}px) rotateY(${rotateY}deg)`;
+  sw.sheet.style.opacity = '1';
+  sw.sheet.style.boxShadow = `${shX==='left'?'-':''}${ratio*50}px 0 ${ratio*60}px -10px rgba(0,0,0,${ratio*0.2}), 0 2px 16px rgba(0,0,0,0.12)`;
 }
 
 function onEnd(e) {
@@ -442,31 +432,33 @@ function onEnd(e) {
   const quick = (Date.now() - sw.st) < 280 && absR > 0.05;
   const flip = absR > THRESH || quick;
 
+  // 统一使用的慢速曲线
+  const EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+
   if (flip) {
     S.flipping = true;
-    // 平滑飞出（慢速）
-    sw.sheet.style.transition = 'all 0.55s cubic-bezier(0.32, 0.72, 0, 1)';
-    sw.sheet.style.transform = `translateX(${sw.dir * 110}%) rotateY(${sw.dir * 35}deg) scale(0.95)`;
-    sw.sheet.style.opacity = '0.15';
+    // 慢速滑出（不闪屏——保持 opacity:1）
+    sw.sheet.style.transition = `all 0.65s ${EASE}`;
+    sw.sheet.style.transform = `translateX(${sw.dir * 110}%) rotateY(${sw.dir * 30}deg)`;
+    sw.sheet.style.opacity = '1';
     sw.sheet.style.boxShadow = 'none';
 
-    // 动画中途切换内容
     setTimeout(async () => {
       const target = getTarget(sw.dir === 1 ? 'forward' : 'backward');
       await loadAndRender(target);
       document.getElementById('pageWrapper').scrollTop = 0;
 
-      // 从另一侧准备飞入
+      // 从另一侧准备
       sw.sheet.style.transition = 'none';
-      sw.sheet.style.transform = `translateX(${-sw.dir * 25}%) rotateY(${-sw.dir * 8}deg) scale(1)`;
-      sw.sheet.style.opacity = '0.4';
+      sw.sheet.style.transform = `translateX(${-sw.dir * 20}%) rotateY(${-sw.dir * 6}deg)`;
+      sw.sheet.style.opacity = '1';
       sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
 
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          // 平滑飞入
-          sw.sheet.style.transition = 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
-          sw.sheet.style.transform = 'translateX(0) rotateY(0) scale(1)';
+          // 慢速滑入
+          sw.sheet.style.transition = `all 0.6s ${EASE}`;
+          sw.sheet.style.transform = 'translateX(0) rotateY(0)';
           sw.sheet.style.opacity = '1';
         });
       });
@@ -475,21 +467,16 @@ function onEnd(e) {
       setTimeout(() => {
         sw.sheet.style.transition = '';
         sw.sheet.style.transform = '';
-        sw.sheet.style.opacity = '';
         sw.sheet.style.boxShadow = '';
-      }, 550);
-    }, 280);
+      }, 650);
+    }, 330);
   } else {
     // 慢速弹回
-    sw.sheet.style.transition = 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
-    sw.sheet.style.transform = 'translateX(0) rotateY(0) scale(1)';
+    sw.sheet.style.transition = `all 0.5s ${EASE}`;
+    sw.sheet.style.transform = 'translateX(0) rotateY(0)';
     sw.sheet.style.opacity = '1';
     sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
-    setTimeout(() => {
-      sw.sheet.style.transition = '';
-      sw.sheet.style.transform = '';
-      sw.sheet.style.boxShadow = '';
-    }, 550);
+    setTimeout(() => { sw.sheet.style.transition = ''; sw.sheet.style.transform = ''; sw.sheet.style.boxShadow = ''; }, 550);
   }
   resetSwipe();
 }
