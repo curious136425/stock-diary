@@ -150,23 +150,18 @@ function updateIndicator() {
 
 async function jumpTo(dateStr) {
   await loadAndRender(dateStr);
-  document.getElementById('frontScroll').scrollTop = 0;
+  document.getElementById('pageScroll').scrollTop = 0;
 }
 
 // ====== 内容渲染 ======
 function renderPage() {
   S.module === 'regular' ? renderRegular() : renderTemp();
-  document.getElementById('frontScroll').scrollTop = 0;
-}
-
-// 返回纯HTML（给底层用）
-function renderHTML(d) {
-  return S.module === 'regular' ? regularHTML(d) : tempHTML(d);
+  document.getElementById('pageScroll').scrollTop = 0;
 }
 
 function renderRegular() {
   const d = S.diaryData || emptyDiary(S.currentDate);
-  document.getElementById('frontScroll').innerHTML = regularHTML(d);
+  document.getElementById('pageScroll').innerHTML = regularHTML(d);
   bindStockHover();
 }
 
@@ -221,7 +216,7 @@ function bindStockHover() {
 
 function renderTemp() {
   const d = S.diaryData || emptyDiary(S.currentDate);
-  document.getElementById('frontScroll').innerHTML = tempHTML(d);
+  document.getElementById('pageScroll').innerHTML = tempHTML(d);
 }
 
 function tempHTML(d) {
@@ -386,12 +381,13 @@ function download(content, name, type) {
   const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
 }
 
-// ====== 仿真书翻页（3D双层叠加卷页）======
+// ====== 翻书翻页（简单可靠：左滑前进，右滑后退）======
 const THRESH = 0.20;
-const sw = { active:false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, locked:false };
-let backDate = null; // 底层显示的日期
+const sw = { active:false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, locked:false, sheet:null, shadow:null };
 
 function initSwipe() {
+  sw.sheet = document.getElementById('pageSheet');
+  sw.shadow = document.getElementById('pageShadow');
   const pw = document.getElementById('pageWrapper');
   pw.addEventListener('touchstart', onStart, { passive: false });
   pw.addEventListener('touchmove', onMove, { passive: false });
@@ -402,10 +398,11 @@ function initSwipe() {
 function onStart(e) {
   if (S.flipping) return;
   const t = e.touches[0];
-  sw.active = true; sw.sx = t.clientX; sw.sy = t.clientY;
+  sw.active = true;
+  sw.sx = t.clientX; sw.sy = t.clientY;
   sw.cx = t.clientX; sw.cy = t.clientY;
   sw.st = Date.now(); sw.dir = 0; sw.locked = false;
-  document.getElementById('pageFront').style.transition = 'none';
+  sw.sheet.style.transition = 'none';
 }
 
 function onMove(e) {
@@ -415,88 +412,83 @@ function onMove(e) {
 
   if (!sw.locked) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    if (Math.abs(dx) > Math.abs(dy) * 1.5) {
-      sw.dir = dx < 0 ? 1 : -1;
+    if (Math.abs(dx) > Math.abs(dy) * 1.8) {
+      // 左滑(dx<0)=前进，右滑(dx>0)=后退
+      sw.dir = dx < 0 ? 1 : -1; // 1=前进, -1=后退
       sw.locked = true;
       e.preventDefault();
-      // 第一次水平移动时，加载底层内容
-      loadBackPage(sw.dir === 1 ? 'forward' : 'backward');
     } else { sw.dir = 0; sw.locked = true; return; }
   }
   if (sw.dir === 0) return;
   e.preventDefault();
 
-  const w = document.getElementById('pageWrapper').clientWidth;
-  const maxAngle = 150; // 最大旋转角度
-  const clampedDx = Math.max(-w * 0.8, Math.min(w * 0.8, sw.cx - sw.sx));
-  const angle = (clampedDx / (w * 0.8)) * maxAngle;
+  const w = sw.sheet.parentElement.clientWidth;
+  const clampedDx = Math.max(-w, Math.min(w, sw.cx - sw.sx));
+  const ratio = Math.min(Math.abs(clampedDx) / w, 1);
 
-  const front = document.getElementById('pageFront');
+  // 页面跟手平移 + 轻微旋转
+  const rotateY = (clampedDx / w) * 15;
+  sw.sheet.style.transform = `translateX(${clampedDx}px) rotateY(${rotateY}deg)`;
+
+  // 折叠侧阴影
   if (sw.dir === 1) {
-    // 前进：右边缘为轴，向左旋转
-    front.style.transformOrigin = 'right center';
-    front.style.transform = `rotateY(${-Math.abs(angle)}deg)`;
+    sw.shadow.style.background = `linear-gradient(to left, rgba(0,0,0,0) 30%, rgba(0,0,0,${ratio*0.12}) 100%)`;
   } else {
-    // 后退：左边缘为轴，向右旋转
-    front.style.transformOrigin = 'left center';
-    front.style.transform = `rotateY(${Math.abs(angle)}deg)`;
+    sw.shadow.style.background = `linear-gradient(to right, rgba(0,0,0,0) 30%, rgba(0,0,0,${ratio*0.12}) 100%)`;
   }
+  sw.shadow.style.opacity = ratio;
 }
 
-async function loadBackPage(direction) {
-  const target = getTarget(direction);
-  if (target === backDate) return;
-  backDate = target;
-  const data = await getDiary(target);
-  data.images = await getImages(target);
-  document.getElementById('backScroll').innerHTML = renderHTML(data);
-}
-
-function onEnd(e) {
+async function onEnd(e) {
   if (!sw.active || sw.dir === 0) { resetSwipe(); return; }
   const dx = sw.cx - sw.sx;
-  const w = document.getElementById('pageWrapper').clientWidth;
+  const w = sw.sheet.parentElement.clientWidth;
   const absR = Math.abs(dx / w);
-  const quick = (Date.now() - sw.st) < 280 && absR > 0.05;
+  const quick = (Date.now() - sw.st) < 280 && absR > 0.04;
   const flip = absR > THRESH || quick;
 
-  const front = document.getElementById('pageFront');
-  const back = document.getElementById('pageBack');
-  const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'; // Apple-style ease
+  const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
 
   if (flip) {
     S.flipping = true;
-    // 完成旋转翻过去
-    front.style.transition = `transform 0.6s ${EASE}`;
-    front.style.transform = `rotateY(${sw.dir === 1 ? -180 : 180}deg)`;
+    // 滑出
+    sw.sheet.style.transition = `transform 0.5s ${EASE}`;
+    sw.sheet.style.transform = `translateX(${sw.dir * 105}%) rotateY(${sw.dir * 20}deg)`;
+    sw.shadow.style.transition = 'opacity 0.3s';
+    sw.shadow.style.opacity = '0';
 
     setTimeout(async () => {
-      // 内容已切换：底层变顶层
-      front.style.transition = 'none';
-      front.style.transform = '';
-      front.style.transformOrigin = '';
+      const target = getTarget(sw.dir === 1 ? 'forward' : 'backward');
+      await loadAndRender(target);
+      document.getElementById('pageScroll').scrollTop = 0;
 
-      // 把底层内容移到顶层
-      document.getElementById('frontScroll').innerHTML = document.getElementById('backScroll').innerHTML;
-      S.diaryData = await getDiary(backDate);
-      S.currentDate = backDate;
-      if (!S.allDates.includes(backDate)) { S.allDates.push(backDate); S.allDates.sort(); }
-      S.pageIdx = S.allDates.indexOf(backDate);
-      document.getElementById('datePicker').value = backDate;
-      document.getElementById('frontScroll').scrollTop = 0;
-      updateIndicator();
-      backDate = null;
+      // 从另一侧准备滑入
+      sw.sheet.style.transition = 'none';
+      sw.sheet.style.transform = `translateX(${-sw.dir * 20}%) rotateY(${-sw.dir * 5}deg)`;
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          sw.sheet.style.transition = `transform 0.5s ${EASE}`;
+          sw.sheet.style.transform = 'translateX(0) rotateY(0)';
+        });
+      });
+
       S.flipping = false;
-    }, 620);
+      setTimeout(() => {
+        sw.sheet.style.transition = '';
+        sw.sheet.style.transform = '';
+      }, 550);
+    }, 250);
   } else {
     // 弹回
-    front.style.transition = `transform 0.45s ${EASE}`;
-    front.style.transform = 'rotateY(0deg)';
+    sw.sheet.style.transition = `transform 0.4s ${EASE}`;
+    sw.sheet.style.transform = 'translateX(0) rotateY(0)';
+    sw.shadow.style.transition = 'opacity 0.3s';
+    sw.shadow.style.opacity = '0';
     setTimeout(() => {
-      front.style.transition = '';
-      front.style.transform = '';
-      front.style.transformOrigin = '';
-    }, 500);
+      sw.sheet.style.transition = '';
+      sw.sheet.style.transform = '';
+    }, 450);
   }
   resetSwipe();
 }

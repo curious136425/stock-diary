@@ -84,52 +84,16 @@ body {
   justify-content: center;
   padding: 12px;
   touch-action: pan-y;
-  perspective: 1500px;
 }
 
-.page-stack {
-  width: 100%;
-  max-width: 600px;
-  height: 100%;
-  position: relative;
-}
-
-/* 前后两页共用样式 */
 .page-sheet {
   width: 100%;
-  height: 100%;
+  max-width: 600px;
   background: var(--paper);
   border-radius: 10px;
   box-shadow: var(--shadow);
+  position: relative;
   will-change: transform;
-  overflow: hidden;
-  position: absolute;
-  top: 0; left: 0;
-  backface-visibility: hidden;
-  transform-style: preserve-3d;
-}
-
-/* 底层（静止不动） */
-.page-back {
-  z-index: 1;
-}
-
-/* 顶层（翻页时旋转） */
-.page-front {
-  z-index: 2;
-}
-
-/* 翻页背面（旋转超过90度时显示） */
-.page-front::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 10px;
-  background: linear-gradient(to left, #e8e4d8, #d5cfc0);
-  backface-visibility: hidden;
-  transform: rotateY(180deg);
-  z-index: 3;
-  pointer-events: none;
 }
 
 /* 内容滚动区 */
@@ -142,6 +106,18 @@ body {
   -webkit-overflow-scrolling: touch;
   position: relative;
   z-index: 1;
+}
+
+/* 翻页阴影层（拖拽或动画时显示） */
+.page-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background: linear-gradient(to left, rgba(0,0,0,0) 60%, rgba(0,0,0,0.08) 100%);
 }
 
 /* ---- 日记内容 ---- */
