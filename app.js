@@ -202,8 +202,7 @@ function regularHTML(d) {
       </div>
     </div>`;
 
-  document.getElementById('pageScroll').innerHTML = html;
-  bindStockHover();
+  return html;
 }
 
 function bindStockHover() {
