@@ -183,145 +183,211 @@ async function loadAndRender(dateStr) {
   updateDotNavigation();
 }
 
-// ====== 拖拽翻页（电子书风格：左滑前进，右滑后退）======
-const DRAG_THRESHOLD = 0.25, MAX_ROTATE = 160;
-const drag = { active: false, startX: 0, currentX: 0, direction: null, startTime: 0,
-               leftPage: null, rightPage: null };
+// ====== 电子书翻页系统（pointer事件 + 翻书动画）======
+const FLIP_THRESHOLD = 0.18;  // 滑动超过18%宽度即翻页
+const SWIPE_VELOCITY = 0.3;   // 快速滑动阈值(px/ms)
+
+const drag = { active: false, startX: 0, prevX: 0, currentX: 0,
+               direction: 0, book: null, startTime: 0, velocity: 0,
+               leftPage: null, rightPage: null, overlay: null };
 
 function initDragToFlip() {
   const book = document.getElementById('book');
-  book.addEventListener('mousedown', onDragStart);
-  book.addEventListener('touchstart', onDragStart, { passive: false });
-  window.addEventListener('mousemove', onDragMove);
-  window.addEventListener('touchmove', onDragMove, { passive: false });
-  window.addEventListener('mouseup', onDragEnd);
-  window.addEventListener('touchend', onDragEnd);
-  window.addEventListener('touchcancel', onDragEnd);
-}
+  drag.book = book;
+  drag.overlay = document.getElementById('flipOverlay');
+  drag.leftPage = book.querySelector('.page-left');
+  drag.rightPage = book.querySelector('.page-right');
 
-function getEventX(e) { return e.touches ? e.touches[0].clientX : e.clientX; }
+  // 统一使用 pointer 事件（同时支持鼠标和触摸）
+  book.addEventListener('pointerdown', onDragStart);
+  book.addEventListener('pointermove', onDragMove);
+  book.addEventListener('pointerup', onDragEnd);
+  book.addEventListener('pointercancel', onDragEnd);
+  book.addEventListener('pointerleave', onDragEnd);
+
+  // 阻止双击缩放干扰
+  book.addEventListener('dblclick', e => e.preventDefault());
+}
 
 function onDragStart(e) {
   if (state.isFlipping) return;
-  if (e.target.closest('.stock-tag,input,textarea,button,.add-tag-btn,.install-btn,.install-dismiss')) return;
+  // 放行交互元素
+  if (e.target.closest('.stock-tag,input,textarea,button,.add-tag-btn,.install-btn,.install-dismiss,.modal-overlay,.modal')) return;
 
-  const x = getEventX(e);
+  // 关键：动态禁用浏览器触摸处理
+  drag.book.style.touchAction = 'none';
+  drag.book.setPointerCapture(e.pointerId);
+
   drag.active = true;
-  drag.startX = x;
-  drag.currentX = x;
+  drag.startX = e.clientX;
+  drag.prevX = e.clientX;
+  drag.currentX = e.clientX;
+  drag.direction = 0;
   drag.startTime = Date.now();
-  drag.direction = null; // 由滑动方向决定
-  drag.leftPage = document.getElementById('leftContent');
-  drag.rightPage = document.getElementById('rightContent');
+  drag.velocity = 0;
 
+  // 禁用过渡(跟手)
   drag.leftPage.style.transition = 'none';
   drag.rightPage.style.transition = 'none';
-  document.getElementById('book').classList.add('dragging');
-  document.body.style.cursor = 'grabbing';
+  drag.overlay.style.transition = 'none';
+
+  drag.book.classList.add('dragging');
   e.preventDefault();
+  e.stopPropagation();
 }
 
 function onDragMove(e) {
   if (!drag.active) return;
-  drag.currentX = getEventX(e);
+
+  drag.prevX = drag.currentX;
+  drag.currentX = e.clientX;
   const deltaX = drag.currentX - drag.startX;
-
-  // 判断滑动方向
-  if (deltaX < -5) drag.direction = 'forward';      // 左滑 = 前进
-  else if (deltaX > 5) drag.direction = 'backward'; // 右滑 = 后退
-  if (!drag.direction) return;
-
-  const book = document.getElementById('book');
-  const pageWidth = book.clientWidth / 2; // 单页宽度
   const absDelta = Math.abs(deltaX);
-  const ratio = Math.min(absDelta / pageWidth, 1);
 
-  const overlay = document.getElementById('flipOverlay');
-  overlay.style.opacity = ratio * 0.7;
+  // 更新速度(用于快速滑动检测)
+  const dt = Date.now() - drag.startTime;
+  if (dt > 0) drag.velocity = absDelta / dt;
 
-  if (drag.direction === 'forward') {
-    // 左滑前进：右页从书脊向左翻
-    drag.rightPage.style.transformOrigin = 'left center';
-    drag.rightPage.style.transform = `rotateY(${-ratio * MAX_ROTATE}deg)`;
-    drag.leftPage.style.transform = '';
-    overlay.style.background = `radial-gradient(ellipse at 25% 50%, rgba(0,0,0,${ratio * 0.2}) 0%, transparent 70%)`;
-  } else {
-    // 右滑后退：左页从书脊向右翻
-    drag.leftPage.style.transformOrigin = 'right center';
-    drag.leftPage.style.transform = `rotateY(${ratio * MAX_ROTATE}deg)`;
-    drag.rightPage.style.transform = '';
-    overlay.style.background = `radial-gradient(ellipse at 75% 50%, rgba(0,0,0,${ratio * 0.2}) 0%, transparent 70%)`;
+  // 方向判定(需要超过最小像素避免误触)
+  if (absDelta > 8) {
+    drag.direction = deltaX < 0 ? -1 : 1; // -1=左滑前进, 1=右滑后退
   }
+  if (drag.direction === 0) return;
+
+  const pageW = drag.book.clientWidth / 2;
+  const ratio = Math.min(absDelta / pageW, 1);
+
+  // === 翻书视觉效果 ===
+  const percent = ratio * 100;
+
+  if (drag.direction === -1) {
+    // 左滑前进：右页从右边缘向左卷曲消失
+    drag.rightPage.style.transform = `perspective(1200px) rotateY(${-ratio * 60}deg)`;
+    drag.rightPage.style.clipPath = `inset(0 ${percent}% 0 0)`;
+    drag.rightPage.style.filter = `brightness(${1 - ratio * 0.3})`;
+    drag.leftPage.style.transform = '';
+    drag.leftPage.style.clipPath = '';
+    drag.leftPage.style.filter = '';
+
+    // 书脊阴影
+    drag.rightPage.style.boxShadow = `${-30 * ratio}px 0 ${40 * ratio}px -20px rgba(0,0,0,${0.5 * ratio})`;
+  } else {
+    // 右滑后退：左页从左边缘向右卷曲消失
+    drag.leftPage.style.transform = `perspective(1200px) rotateY(${ratio * 60}deg)`;
+    drag.leftPage.style.clipPath = `inset(0 0 0 ${percent}%)`;
+    drag.leftPage.style.filter = `brightness(${1 - ratio * 0.3})`;
+    drag.rightPage.style.transform = '';
+    drag.rightPage.style.clipPath = '';
+    drag.rightPage.style.filter = '';
+
+    drag.leftPage.style.boxShadow = `${30 * ratio}px 0 ${40 * ratio}px -20px rgba(0,0,0,${0.5 * ratio})`;
+  }
+
+  // 全局朦胧遮罩
+  drag.overlay.style.opacity = ratio * 0.5;
+  drag.overlay.style.background = `radial-gradient(ellipse at ${drag.direction === -1 ? 25 : 75}% 50%, rgba(0,0,0,${ratio * 0.2}) 0%, transparent 70%)`;
+
   e.preventDefault();
+  e.stopPropagation();
 }
 
-async function onDragEnd(e) {
-  if (!drag.active || !drag.direction) {
-    drag.active = false;
+function onDragEnd(e) {
+  if (!drag.active || drag.direction === 0) {
+    resetDrag();
     return;
   }
 
-  const book = document.getElementById('book');
-  const overlay = document.getElementById('flipOverlay');
-  book.classList.remove('dragging');
-  document.body.style.cursor = '';
-
   const deltaX = drag.currentX - drag.startX;
-  const pageWidth = book.clientWidth / 2;
-  const absRatio = Math.abs(deltaX / pageWidth);
-  const wasQuick = (Date.now() - drag.startTime) < 250 && absRatio > 0.06;
-  const shouldFlip = absRatio > DRAG_THRESHOLD || wasQuick;
+  const pageW = drag.book.clientWidth / 2;
+  const absRatio = Math.abs(deltaX / pageW);
+
+  // 是否翻页：距离够远 OR 快速滑动
+  const shouldFlip = absRatio > FLIP_THRESHOLD || drag.velocity > SWIPE_VELOCITY;
 
   if (shouldFlip) {
-    // 完成翻页
-    state.isFlipping = true;
-    const targetAngle = drag.direction === 'forward' ? -MAX_ROTATE : MAX_ROTATE;
-    const turningPage = drag.direction === 'forward' ? drag.rightPage : drag.leftPage;
-
-    turningPage.style.transition = 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
-    turningPage.style.transform = `rotateY(${targetAngle}deg)`;
-
-    setTimeout(async () => {
-      const targetDate = getTargetDate(drag.direction);
-      await loadAndRender(targetDate);
-      // 重置
-      turningPage.style.transition = 'none';
-      turningPage.style.transform = '';
-      turningPage.style.transformOrigin = '';
-      drag.leftPage.style.transformOrigin = '';
-      drag.rightPage.style.transformOrigin = '';
-      overlay.style.opacity = '0';
-      overlay.style.background = '';
-      state.isFlipping = false;
-    }, 180);
+    completeFlip(drag.direction === -1 ? 'forward' : 'backward');
   } else {
-    // 弹回原位
-    const spring = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-    if (drag.direction === 'forward') {
-      drag.rightPage.style.transition = spring;
-      drag.rightPage.style.transform = 'rotateY(0deg)';
-    } else {
-      drag.leftPage.style.transition = spring;
-      drag.leftPage.style.transform = 'rotateY(0deg)';
-    }
-    overlay.style.transition = 'opacity 0.2s';
-    overlay.style.opacity = '0';
-    overlay.style.background = '';
-
-    setTimeout(() => {
-      drag.leftPage.style.transition = '';
-      drag.leftPage.style.transform = '';
-      drag.leftPage.style.transformOrigin = '';
-      drag.rightPage.style.transition = '';
-      drag.rightPage.style.transform = '';
-      drag.rightPage.style.transformOrigin = '';
-    }, 350);
+    springBack();
   }
+}
 
+function completeFlip(direction) {
+  state.isFlipping = true;
+  const isForward = direction === 'forward';
+  const turningPage = isForward ? drag.rightPage : drag.leftPage;
+  const otherPage = isForward ? drag.leftPage : drag.rightPage;
+
+  // 平滑完成翻页动画
+  turningPage.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+  if (isForward) {
+    turningPage.style.transform = 'perspective(1200px) rotateY(-80deg)';
+    turningPage.style.clipPath = 'inset(0 100% 0 0)';
+    turningPage.style.filter = 'brightness(0.6)';
+  } else {
+    turningPage.style.transform = 'perspective(1200px) rotateY(80deg)';
+    turningPage.style.clipPath = 'inset(0 0 0 100%)';
+    turningPage.style.filter = 'brightness(0.6)';
+  }
+  drag.overlay.style.transition = 'opacity 0.3s';
+  drag.overlay.style.opacity = '1';
+
+  // 动画中点切换内容
+  setTimeout(async () => {
+    const targetDate = getTargetDate(isForward ? 'forward' : 'backward');
+    await loadAndRender(targetDate);
+
+    // 重置所有样式
+    [drag.leftPage, drag.rightPage].forEach(p => {
+      p.style.transition = 'none';
+      p.style.transform = '';
+      p.style.clipPath = '';
+      p.style.filter = '';
+      p.style.boxShadow = '';
+    });
+    drag.overlay.style.transition = 'none';
+    drag.overlay.style.opacity = '0';
+    drag.overlay.style.background = '';
+
+    state.isFlipping = false;
+    resetDrag();
+  }, 200);
+}
+
+function springBack() {
+  const turningPage = drag.direction === -1 ? drag.rightPage : drag.leftPage;
+
+  turningPage.style.transition = 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  turningPage.style.transform = '';
+  turningPage.style.clipPath = '';
+  turningPage.style.filter = '';
+  turningPage.style.boxShadow = '';
+
+  drag.overlay.style.transition = 'opacity 0.25s';
+  drag.overlay.style.opacity = '0';
+  drag.overlay.style.background = '';
+
+  setTimeout(() => resetDrag(), 350);
+}
+
+function resetDrag() {
   drag.active = false;
-  drag.leftPage = null;
-  drag.rightPage = null;
-  drag.direction = null;
+  drag.direction = 0;
+
+  [drag.leftPage, drag.rightPage].forEach(p => {
+    p.style.transition = '';
+    p.style.transform = '';
+    p.style.clipPath = '';
+    p.style.filter = '';
+    p.style.boxShadow = '';
+  });
+
+  drag.overlay.style.transition = '';
+  drag.overlay.style.opacity = '';
+  drag.overlay.style.background = '';
+
+  drag.book.classList.remove('dragging');
+  // 恢复竖直滚动
+  drag.book.style.touchAction = 'pan-y';
 }
 
 function getTargetDate(direction) {
