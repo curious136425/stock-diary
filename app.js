@@ -150,17 +150,27 @@ function updateIndicator() {
 
 async function jumpTo(dateStr) {
   await loadAndRender(dateStr);
-  document.getElementById('pageWrapper').scrollTop = 0;
+  document.getElementById('frontScroll').scrollTop = 0;
 }
 
-// ====== 内容渲染 (单页) ======
+// ====== 内容渲染 ======
 function renderPage() {
   S.module === 'regular' ? renderRegular() : renderTemp();
-  document.getElementById('pageWrapper').scrollTop = 0;
+  document.getElementById('frontScroll').scrollTop = 0;
+}
+
+// 返回纯HTML（给底层用）
+function renderHTML(d) {
+  return S.module === 'regular' ? regularHTML(d) : tempHTML(d);
 }
 
 function renderRegular() {
   const d = S.diaryData || emptyDiary(S.currentDate);
+  document.getElementById('frontScroll').innerHTML = regularHTML(d);
+  bindStockHover();
+}
+
+function regularHTML(d) {
   const byC = {};
   (d.picks||[]).forEach(p => { (byC[p.criteria_type]=byC[p.criteria_type]||[]).push(p); });
 
@@ -197,21 +207,25 @@ function renderRegular() {
       </div>
     </div>`;
 
-  document.getElementById('pageScroll').innerHTML = html;
-  // hover显示删除按钮
+  document.getElementById('frontScroll').innerHTML = html;
+  bindStockHover();
+}
+
+function bindStockHover() {
   document.querySelectorAll('.thoughts-imgs > div').forEach(d => {
     d.addEventListener('mouseenter',()=>d.querySelector('.img-del').style.display='block');
     d.addEventListener('mouseleave',()=>d.querySelector('.img-del').style.display='none');
-  });
-  document.querySelectorAll('.thoughts-imgs > div').forEach(d => {
     d.addEventListener('touchstart',()=>{ const b=d.querySelector('.img-del'); b.style.display=b.style.display==='block'?'none':'block'; });
   });
 }
 
 function renderTemp() {
   const d = S.diaryData || emptyDiary(S.currentDate);
-  document.getElementById('pageScroll').innerHTML = `
-    <div class="page-date">${fmtDate(d.date)}</div>
+  document.getElementById('frontScroll').innerHTML = tempHTML(d);
+}
+
+function tempHTML(d) {
+  return `<div class="page-date">${fmtDate(d.date)}</div>
     <div class="page-title">📝 临时日记</div>
     <input type="text" class="temp-title-input" id="tempTitle" placeholder="标题..."
       value="${esc(d.selection_philosophy||'')}" onblur="saveTempTitle()">
@@ -372,15 +386,13 @@ function download(content, name, type) {
   const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
 }
 
-// ====== 仿真书翻页（慢速、不闪屏）======
+// ====== 仿真书翻页（3D双层叠加卷页）======
 const THRESH = 0.20;
-const sw = { active:false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, sheet:null, locked:false };
+const sw = { active:false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, locked:false };
+let backDate = null; // 底层显示的日期
 
 function initSwipe() {
-  sw.sheet = document.getElementById('pageSheet');
   const pw = document.getElementById('pageWrapper');
-  pw.style.perspective = '1200px';
-
   pw.addEventListener('touchstart', onStart, { passive: false });
   pw.addEventListener('touchmove', onMove, { passive: false });
   pw.addEventListener('touchend', onEnd);
@@ -393,7 +405,7 @@ function onStart(e) {
   sw.active = true; sw.sx = t.clientX; sw.sy = t.clientY;
   sw.cx = t.clientX; sw.cy = t.clientY;
   sw.st = Date.now(); sw.dir = 0; sw.locked = false;
-  sw.sheet.style.transition = 'none';
+  document.getElementById('pageFront').style.transition = 'none';
 }
 
 function onMove(e) {
@@ -407,76 +419,84 @@ function onMove(e) {
       sw.dir = dx < 0 ? 1 : -1;
       sw.locked = true;
       e.preventDefault();
+      // 第一次水平移动时，加载底层内容
+      loadBackPage(sw.dir === 1 ? 'forward' : 'backward');
     } else { sw.dir = 0; sw.locked = true; return; }
   }
   if (sw.dir === 0) return;
   e.preventDefault();
 
-  const w = sw.sheet.parentElement.clientWidth;
-  const clampedDx = Math.max(-w, Math.min(w, dx));
-  const ratio = Math.min(Math.abs(clampedDx / w), 1);
+  const w = document.getElementById('pageWrapper').clientWidth;
+  const maxAngle = 150; // 最大旋转角度
+  const clampedDx = Math.max(-w * 0.8, Math.min(w * 0.8, sw.cx - sw.sx));
+  const angle = (clampedDx / (w * 0.8)) * maxAngle;
 
-  // 跟手：平移 + 轻微3D + 阴影（不改透明度！）
-  const rotateY = (clampedDx / w) * 18;
-  const shX = sw.dir === 1 ? 'left' : 'right';
-  sw.sheet.style.transform = `translateX(${clampedDx}px) rotateY(${rotateY}deg)`;
-  sw.sheet.style.opacity = '1';
-  sw.sheet.style.boxShadow = `${shX==='left'?'-':''}${ratio*50}px 0 ${ratio*60}px -10px rgba(0,0,0,${ratio*0.2}), 0 2px 16px rgba(0,0,0,0.12)`;
+  const front = document.getElementById('pageFront');
+  if (sw.dir === 1) {
+    // 前进：右边缘为轴，向左旋转
+    front.style.transformOrigin = 'right center';
+    front.style.transform = `rotateY(${-Math.abs(angle)}deg)`;
+  } else {
+    // 后退：左边缘为轴，向右旋转
+    front.style.transformOrigin = 'left center';
+    front.style.transform = `rotateY(${Math.abs(angle)}deg)`;
+  }
+}
+
+async function loadBackPage(direction) {
+  const target = getTarget(direction);
+  if (target === backDate) return;
+  backDate = target;
+  const data = await getDiary(target);
+  data.images = await getImages(target);
+  document.getElementById('backScroll').innerHTML = renderHTML(data);
 }
 
 function onEnd(e) {
   if (!sw.active || sw.dir === 0) { resetSwipe(); return; }
   const dx = sw.cx - sw.sx;
-  const w = sw.sheet.parentElement.clientWidth;
+  const w = document.getElementById('pageWrapper').clientWidth;
   const absR = Math.abs(dx / w);
   const quick = (Date.now() - sw.st) < 280 && absR > 0.05;
   const flip = absR > THRESH || quick;
 
-  // 统一使用的慢速曲线
-  const EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+  const front = document.getElementById('pageFront');
+  const back = document.getElementById('pageBack');
+  const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'; // Apple-style ease
 
   if (flip) {
     S.flipping = true;
-    // 慢速滑出（不闪屏——保持 opacity:1）
-    sw.sheet.style.transition = `all 0.65s ${EASE}`;
-    sw.sheet.style.transform = `translateX(${sw.dir * 110}%) rotateY(${sw.dir * 30}deg)`;
-    sw.sheet.style.opacity = '1';
-    sw.sheet.style.boxShadow = 'none';
+    // 完成旋转翻过去
+    front.style.transition = `transform 0.6s ${EASE}`;
+    front.style.transform = `rotateY(${sw.dir === 1 ? -180 : 180}deg)`;
 
     setTimeout(async () => {
-      const target = getTarget(sw.dir === 1 ? 'forward' : 'backward');
-      await loadAndRender(target);
-      document.getElementById('pageWrapper').scrollTop = 0;
+      // 内容已切换：底层变顶层
+      front.style.transition = 'none';
+      front.style.transform = '';
+      front.style.transformOrigin = '';
 
-      // 从另一侧准备
-      sw.sheet.style.transition = 'none';
-      sw.sheet.style.transform = `translateX(${-sw.dir * 20}%) rotateY(${-sw.dir * 6}deg)`;
-      sw.sheet.style.opacity = '1';
-      sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          // 慢速滑入
-          sw.sheet.style.transition = `all 0.6s ${EASE}`;
-          sw.sheet.style.transform = 'translateX(0) rotateY(0)';
-          sw.sheet.style.opacity = '1';
-        });
-      });
-
+      // 把底层内容移到顶层
+      document.getElementById('frontScroll').innerHTML = document.getElementById('backScroll').innerHTML;
+      S.diaryData = await getDiary(backDate);
+      S.currentDate = backDate;
+      if (!S.allDates.includes(backDate)) { S.allDates.push(backDate); S.allDates.sort(); }
+      S.pageIdx = S.allDates.indexOf(backDate);
+      document.getElementById('datePicker').value = backDate;
+      document.getElementById('frontScroll').scrollTop = 0;
+      updateIndicator();
+      backDate = null;
       S.flipping = false;
-      setTimeout(() => {
-        sw.sheet.style.transition = '';
-        sw.sheet.style.transform = '';
-        sw.sheet.style.boxShadow = '';
-      }, 650);
-    }, 330);
+    }, 620);
   } else {
-    // 慢速弹回
-    sw.sheet.style.transition = `all 0.5s ${EASE}`;
-    sw.sheet.style.transform = 'translateX(0) rotateY(0)';
-    sw.sheet.style.opacity = '1';
-    sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
-    setTimeout(() => { sw.sheet.style.transition = ''; sw.sheet.style.transform = ''; sw.sheet.style.boxShadow = ''; }, 550);
+    // 弹回
+    front.style.transition = `transform 0.45s ${EASE}`;
+    front.style.transform = 'rotateY(0deg)';
+    setTimeout(() => {
+      front.style.transition = '';
+      front.style.transform = '';
+      front.style.transformOrigin = '';
+    }, 500);
   }
   resetSwipe();
 }

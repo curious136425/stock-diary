@@ -46,11 +46,16 @@
   </div>
 </header>
 
-<!-- 页面主体：单页滑动区 -->
+<!-- 页面主体：翻书区（双层叠加） -->
 <div class="page-wrapper" id="pageWrapper">
-  <div class="page-sheet" id="pageSheet">
-    <div class="page-scroll" id="pageScroll">
-      <!-- JS动态渲染 -->
+  <div class="page-stack">
+    <!-- 底层：下一页/上一页 -->
+    <div class="page-sheet page-back" id="pageBack">
+      <div class="page-scroll" id="backScroll"></div>
+    </div>
+    <!-- 顶层：当前页（翻页时旋转） -->
+    <div class="page-sheet page-front" id="pageFront">
+      <div class="page-scroll" id="frontScroll"></div>
     </div>
   </div>
 </div>
