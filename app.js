@@ -372,13 +372,15 @@ function download(content, name, type) {
   const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
 }
 
-// ====== 滑动翻页系统（方向感知：水平=翻页，竖直=滚动）======
-const THRESH = 0.22;
-const sw = { active: false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, sheet:null, vy:0, locked:false };
+// ====== 仿真书翻页（慢速、丝滑）======
+const THRESH = 0.20;
+const sw = { active: false, sx:0, sy:0, cx:0, cy:0, dir:0, st:0, sheet:null, locked:false };
 
 function initSwipe() {
   sw.sheet = document.getElementById('pageSheet');
   const pw = document.getElementById('pageWrapper');
+  // 加透视深度
+  pw.style.perspective = '1200px';
 
   pw.addEventListener('touchstart', onStart, { passive: false });
   pw.addEventListener('touchmove', onMove, { passive: false });
@@ -401,14 +403,13 @@ function onMove(e) {
   const dx = sw.cx - sw.sx, dy = sw.cy - sw.sy;
 
   if (!sw.locked) {
-    // 判断主方向: 需要至少移动8px
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    if (Math.abs(dx) > Math.abs(dy) * 1.3) {
-      sw.dir = dx < 0 ? 1 : -1; // 1=前进(左滑), -1=后退(右滑)
+    if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+      sw.dir = dx < 0 ? 1 : -1; // 1=前进, -1=后退
       sw.locked = true;
-      e.preventDefault(); // 锁定方向后阻止滚动
+      e.preventDefault();
     } else {
-      sw.dir = 0; sw.locked = true; // 竖直滚动，不干预
+      sw.dir = 0; sw.locked = true;
       return;
     }
   }
@@ -416,11 +417,21 @@ function onMove(e) {
   if (sw.dir === 0) return;
   e.preventDefault();
 
-  // 页面跟手滑动
+  // 仿真书翻页效果：平移 + 轻微3D旋转 + 阴影
   const w = sw.sheet.parentElement.clientWidth;
-  const ratio = Math.min(Math.abs(dx) / w, 1);
-  sw.sheet.style.transform = `translateX(${dx}px)`;
-  sw.sheet.style.opacity = `${1 - ratio * 0.3}`;
+  const ratio = Math.min(Math.abs(dx) / (w * 0.6), 1);
+  const clampedDx = Math.max(-w, Math.min(w, dx));
+
+  // 平移跟手 + 3D旋转 + 缩放
+  const rotateY = (clampedDx / w) * 25; // 最多倾斜25度
+  const scale = 1 - Math.abs(clampedDx / w) * 0.05; // 轻微缩小
+  sw.sheet.style.transform = `translateX(${clampedDx}px) rotateY(${rotateY}deg) scale(${scale})`;
+  sw.sheet.style.opacity = `${1 - ratio * 0.15}`;
+
+  // 翻页阴影（书脊侧加深）
+  const shadowX = sw.dir === 1 ? 'left' : 'right';
+  const shadowIntensity = ratio * 0.25;
+  sw.sheet.style.boxShadow = `${shadowX === 'left' ? '-' : ''}${ratio * 60}px 0 ${ratio * 80}px -20px rgba(0,0,0,${shadowIntensity}), 0 2px 16px rgba(0,0,0,0.12)`;
 }
 
 function onEnd(e) {
@@ -428,37 +439,57 @@ function onEnd(e) {
   const dx = sw.cx - sw.sx;
   const w = sw.sheet.parentElement.clientWidth;
   const absR = Math.abs(dx / w);
-  const quick = (Date.now() - sw.st) < 250 && absR > 0.06;
+  const quick = (Date.now() - sw.st) < 280 && absR > 0.05;
   const flip = absR > THRESH || quick;
 
   if (flip) {
     S.flipping = true;
-    // 飞出屏幕
-    sw.sheet.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
-    sw.sheet.style.transform = `translateX(${sw.dir * 100}%)`;
-    sw.sheet.style.opacity = '0';
+    // 平滑飞出（慢速）
+    sw.sheet.style.transition = 'all 0.55s cubic-bezier(0.32, 0.72, 0, 1)';
+    sw.sheet.style.transform = `translateX(${sw.dir * 110}%) rotateY(${sw.dir * 35}deg) scale(0.95)`;
+    sw.sheet.style.opacity = '0.15';
+    sw.sheet.style.boxShadow = 'none';
 
+    // 动画中途切换内容
     setTimeout(async () => {
       const target = getTarget(sw.dir === 1 ? 'forward' : 'backward');
       await loadAndRender(target);
-      // 从另一侧飞入
+      document.getElementById('pageWrapper').scrollTop = 0;
+
+      // 从另一侧准备飞入
       sw.sheet.style.transition = 'none';
-      sw.sheet.style.transform = `translateX(${-sw.dir * 30}%)`;
-      sw.sheet.style.opacity = '0';
+      sw.sheet.style.transform = `translateX(${-sw.dir * 25}%) rotateY(${-sw.dir * 8}deg) scale(1)`;
+      sw.sheet.style.opacity = '0.4';
+      sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
+
       requestAnimationFrame(() => {
-        sw.sheet.style.transition = 'all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-        sw.sheet.style.transform = 'translateX(0)';
-        sw.sheet.style.opacity = '1';
+        requestAnimationFrame(() => {
+          // 平滑飞入
+          sw.sheet.style.transition = 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
+          sw.sheet.style.transform = 'translateX(0) rotateY(0) scale(1)';
+          sw.sheet.style.opacity = '1';
+        });
       });
+
       S.flipping = false;
-      setTimeout(() => { sw.sheet.style.transition = ''; }, 400);
-    }, 300);
+      setTimeout(() => {
+        sw.sheet.style.transition = '';
+        sw.sheet.style.transform = '';
+        sw.sheet.style.opacity = '';
+        sw.sheet.style.boxShadow = '';
+      }, 550);
+    }, 280);
   } else {
-    // 弹回
-    sw.sheet.style.transition = 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-    sw.sheet.style.transform = 'translateX(0)';
+    // 慢速弹回
+    sw.sheet.style.transition = 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
+    sw.sheet.style.transform = 'translateX(0) rotateY(0) scale(1)';
     sw.sheet.style.opacity = '1';
-    setTimeout(() => { sw.sheet.style.transition = ''; }, 350);
+    sw.sheet.style.boxShadow = '0 2px 16px rgba(0,0,0,0.12)';
+    setTimeout(() => {
+      sw.sheet.style.transition = '';
+      sw.sheet.style.transform = '';
+      sw.sheet.style.boxShadow = '';
+    }, 550);
   }
   resetSwipe();
 }
